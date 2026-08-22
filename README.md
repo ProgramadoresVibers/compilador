@@ -2,8 +2,6 @@
 
 Este repositório apresenta o desenvolvimento do **front-end de um compilador para a linguagem MiniC**. Atualmente, o projeto encontra-se na sua primeira etapa concluída: a implementação do **Analisador Léxico (Scanner)**. 
 
-O objetivo desta fase é ler o código-fonte de entrada (`.c` ou `.minic`), realizar a varredura dos caracteres identificar os lexemas e convertê-los em uma sequência de tokens válidos estruturados em formato JSONL, além de tratar eventuais erros léxicos.
-
 ---
 
 ## Pré-requisitos e Dependências
