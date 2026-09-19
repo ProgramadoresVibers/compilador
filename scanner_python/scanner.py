@@ -1172,26 +1172,34 @@ if __name__ == "__main__":
         print("Erro: Nenhum arquivo de entrada fornecido.", file=sys.stderr)
         sys.exit(1)
 
-    arquivo_path = sys.argv[1]
+    # Modo somente tokens/léxico se solicitado explicitamente
+    if sys.argv[1] in ("--tokens", "-t"):
+        if len(sys.argv) < 3:
+            print("Erro: Nenhum arquivo de entrada fornecido para o scanner.", file=sys.stderr)
+            sys.exit(1)
+        arquivo_path = sys.argv[2]
+        tokens, erros = analisar_arquivo(arquivo_path)
+        for token in tokens:
+            print(json.dumps(token, ensure_ascii=False))
 
-    tokens, erros = analisar_arquivo(arquivo_path)
-    for token in tokens:
-        print(json.dumps(token, ensure_ascii=False))
-
-    if erros:
-        # 1. Define a pasta onde os erros serão salvos
-        pasta_erros = Path("errors")
-
-        # 2. Cria a pasta 'errors' automaticamente caso ela ainda não exista
-        pasta_erros.mkdir(parents=True, exist_ok=True)
-
-        # 3. Pega apenas o nome do arquivo de entrada (ex: "teste1.minic" -> "teste1")
-        nome_base = Path(arquivo_path).stem
-
-        # 4. Monta o caminho final dentro da pasta errors: errors/teste1.errors.jsonl
-        caminho_erros = pasta_erros / f"{nome_base}.errors.jsonl"
-
-        # 5. Escreve os dicionários da lista no arquivo físico (um JSON por linha)
-        with open(caminho_erros, "w", encoding="utf-8") as f:
-            for erro in erros:
-                f.write(json.dumps(erro, ensure_ascii=False) + "\n")
+        if erros:
+            pasta_erros = Path("errors")
+            pasta_erros.mkdir(parents=True, exist_ok=True)
+            nome_base = Path(arquivo_path).stem
+            caminho_erros = pasta_erros / f"{nome_base}.errors.jsonl"
+            with open(caminho_erros, "w", encoding="utf-8") as f:
+                for erro in erros:
+                    f.write(json.dumps(erro, ensure_ascii=False) + "\n")
+    else:
+        # Para achar o parser
+        raiz_projeto = str(Path(__file__).resolve().parent.parent)
+        if raiz_projeto not in sys.path:
+            sys.path.insert(0, raiz_projeto)
+            
+        # Execução integrada do parser via scanner: python scanner.py codigo.c
+        try:
+            from parser_python.parser import main as parser_main
+        except ImportError:
+            import parser
+            parser_main = parser.main
+        parser_main()
