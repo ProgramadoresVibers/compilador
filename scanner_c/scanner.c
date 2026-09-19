@@ -4,6 +4,8 @@
 #include <ctype.h>
 #include <stdbool.h>
 
+#include "scanner.h"
+
 #ifdef _WIN32
     #include <direct.h>
     #define MAKE_DIR(path) _mkdir(path)
@@ -19,28 +21,6 @@ const char* RESERVED_WORDS[] = {
     "print", "read"
 };
 const int NUM_RESERVED = 22;
-
-typedef enum {
-    ATTR_NONE, ATTR_INT, ATTR_FLOAT, ATTR_STR
-} AttrType;
-
-typedef struct {
-    const char* token;
-    char* lexeme;
-    AttrType attr_type;
-    int attr_int;
-    double attr_float;
-    char* attr_str;
-    int line;
-    int column;
-} Token;
-
-typedef struct {
-    const char* error;
-    char* lexeme;
-    int line;
-    int column;
-} Error;
 
 typedef enum {
     STATE_INITIAL, STATE_IDENTIFIER, STATE_INT, STATE_REAL, STATE_FLOAT_SUFFIX,
@@ -93,6 +73,18 @@ Error* errors = NULL;
 size_t errors_count = 0;
 size_t errors_cap = 0;
 
+// strdup não faz parte do C11; esta versão mantém o scanner portável.
+static char* scanner_duplicate_string(const char* source) {
+    size_t length = strlen(source) + 1;
+    char* copy = (char*)malloc(length);
+    if (!copy) {
+        fprintf(stderr, "Erro: Memória insuficiente no scanner.\n");
+        exit(EXIT_FAILURE);
+    }
+    memcpy(copy, source, length);
+    return copy;
+}
+
 void add_token(const char* tok, const char* lex, AttrType type, int a_int, double a_float, const char* a_str, int line, int col) {
     if (tokens_count >= tokens_cap) {
         tokens_cap = tokens_cap == 0 ? 128 : tokens_cap * 2;
@@ -100,11 +92,11 @@ void add_token(const char* tok, const char* lex, AttrType type, int a_int, doubl
     }
     Token* t = &tokens[tokens_count++];
     t->token = tok;
-    t->lexeme = strdup(lex);
+    t->lexeme = scanner_duplicate_string(lex);
     t->attr_type = type;
     t->attr_int = a_int;
     t->attr_float = a_float;
-    t->attr_str = a_str ? strdup(a_str) : NULL;
+    t->attr_str = a_str ? scanner_duplicate_string(a_str) : NULL;
     t->line = line;
     t->column = col;
 }
@@ -116,7 +108,7 @@ void add_error(const char* err_type, const char* lex, int line, int col) {
     }
     Error* e = &errors[errors_count++];
     e->error = err_type;
-    e->lexeme = strdup(lex);
+    e->lexeme = scanner_duplicate_string(lex);
     e->line = line;
     e->column = col;
 }
@@ -127,6 +119,27 @@ bool is_reserved(const char* str) {
         if (strcmp(str, RESERVED_WORDS[i]) == 0) return true;
     }
     return false;
+}
+
+void free_scanner(void) {
+    for (size_t i = 0; i < tokens_count; i++) {
+        // Os nomes de palavras reservadas são os únicos tokens alocados.
+        if (is_reserved(tokens[i].lexeme)) free((void*)tokens[i].token);
+        free(tokens[i].lexeme);
+        free(tokens[i].attr_str);
+    }
+    free(tokens);
+    tokens = NULL;
+    tokens_count = 0;
+    tokens_cap = 0;
+
+    for (size_t i = 0; i < errors_count; i++) {
+        free(errors[i].lexeme);
+    }
+    free(errors);
+    errors = NULL;
+    errors_count = 0;
+    errors_cap = 0;
 }
 
 void toupper_str(char* dest, const char* src) {
@@ -207,7 +220,7 @@ void analyze_file(const char* filename) {
     }
 
     fseek(file, 0, SEEK_END);
-    long length = ftell(file);
+    size_t length = (size_t) ftell(file);
     fseek(file, 0, SEEK_SET);
     char* content = (char*)malloc(length + 1);
     fread(content, 1, length, file);
@@ -271,7 +284,7 @@ void analyze_file(const char* filename) {
                     if (is_reserved(string_temp.data)) {
                         char upper_tok[64];
                         toupper_str(upper_tok, string_temp.data);
-                        add_token(strdup(upper_tok), string_temp.data, ATTR_NONE, 0, 0, NULL, linha_inicio, coluna_inicio);
+                        add_token(scanner_duplicate_string(upper_tok), string_temp.data, ATTR_NONE, 0, 0, NULL, linha_inicio, coluna_inicio);
                     } else {
                         add_token("IDENT", string_temp.data, ATTR_STR, 0, 0, string_temp.data, linha_inicio, coluna_inicio);
                     }
@@ -291,7 +304,7 @@ void analyze_file(const char* filename) {
                 if (isdigit(c)) {
                     sb_append(&string_temp, c);
                 } else if (c == '.') {
-                    if (idx + 1 < length && isdigit(content[idx + 1])) {
+                    if (idx + 1 < (size_t) length && isdigit(content[idx + 1])) {
                         sb_append(&string_temp, c);
                         estado = STATE_REAL;
                     } else {
@@ -312,7 +325,7 @@ void analyze_file(const char* filename) {
                     StringBuffer invalid; sb_init(&invalid);
                     sb_append_str(&invalid, string_temp.data);
                     sb_append(&invalid, c);
-                    int pos = idx + 1;
+                    size_t pos = idx + 1;
                     while (pos < length && (isalnum(content[pos]) || content[pos] == '_')) {
                         sb_append(&invalid, content[pos++]);
                     }
@@ -345,7 +358,7 @@ void analyze_file(const char* filename) {
                     StringBuffer invalid; sb_init(&invalid);
                     sb_append_str(&invalid, string_temp.data);
                     sb_append(&invalid, c);
-                    int pos = idx + 1;
+                    size_t pos = idx + 1;
                     while (pos < length && (isalnum(content[pos]) || content[pos] == '_')) {
                         sb_append(&invalid, content[pos++]);
                     }
@@ -370,7 +383,7 @@ void analyze_file(const char* filename) {
                     add_token("FLOAT_LIT", lexema_bruto.data, ATTR_FLOAT, 0, atof(lexema_bruto.data), NULL, linha_inicio, coluna_inicio);
                     sb_clear(&string_temp); sb_clear(&lexema_bruto); estado = STATE_IDENTIFIER; linha_inicio = i; coluna_inicio = j; reprocess = true;
                 } else if (strchr(" \n\r+-/*=!<>,;:(){}[]&|%", c)) {
-                    char* f_val = strdup(lexema_bruto.data);
+                    char* f_val = scanner_duplicate_string(lexema_bruto.data);
                     f_val[strlen(f_val)-1] = '\0'; // tira F
                     add_token("FLOAT_LIT", lexema_bruto.data, ATTR_FLOAT, 0, atof(f_val), NULL, linha_inicio, coluna_inicio);
                     free(f_val);
@@ -452,10 +465,10 @@ void analyze_file(const char* filename) {
                     if (c == '\\') estado = STATE_ESCAPE_CHAR;
                     else {
                         if (string_temp.len >= 1) {
-                            while (idx + 1 < length && content[idx+1] != '\'' && content[idx+1] != '\n') {
+                            while (idx + 1 < (size_t) length && content[idx+1] != '\'' && content[idx+1] != '\n') {
                                 sb_append(&lexema_bruto, content[++idx]); j++;
                             }
-                            if (idx < length && content[idx] != '\n') { sb_append(&lexema_bruto, '\''); idx++; j++; }
+                            if (idx < (size_t) length && content[idx] != '\n') { sb_append(&lexema_bruto, '\''); idx++; j++; }
                             add_error("CHAR_TOO_LONG", lexema_bruto.data, linha_inicio, coluna_inicio);
                             recover_tokens(lexema_bruto.data, linha_inicio, coluna_inicio);
                             sb_clear(&string_temp); sb_clear(&lexema_bruto); estado = STATE_INITIAL;
@@ -516,7 +529,7 @@ void analyze_file(const char* filename) {
         if (is_reserved(string_temp.data)) {
             char upper_tok[64];
             toupper_str(upper_tok, string_temp.data);
-            add_token(strdup(upper_tok), string_temp.data, ATTR_NONE, 0, 0, NULL, linha_inicio, coluna_inicio);
+            add_token(scanner_duplicate_string(upper_tok), string_temp.data, ATTR_NONE, 0, 0, NULL, linha_inicio, coluna_inicio);
         } else {
             add_token("IDENT", string_temp.data, ATTR_STR, 0, 0, string_temp.data, linha_inicio, coluna_inicio);
         }
@@ -528,7 +541,7 @@ void analyze_file(const char* filename) {
         add_token("FLOAT_LIT", string_temp.data, ATTR_FLOAT, 0, atof(string_temp.data), NULL, linha_inicio, coluna_inicio);
     }
     else if (estado == STATE_FLOAT_SUFFIX) {
-        char* f_val = strdup(lexema_bruto.data);
+        char* f_val = scanner_duplicate_string(lexema_bruto.data);
         if (strlen(f_val) > 0) f_val[strlen(f_val) - 1] = '\0'; // Remove o 'F' ou 'f'
         add_token("FLOAT_LIT", lexema_bruto.data, ATTR_FLOAT, 0, atof(f_val), NULL, linha_inicio, coluna_inicio);
         free(f_val);
@@ -594,13 +607,37 @@ void write_errors(const char* filepath) {
 }
 
 // --- MAIN ---
+// Defina SCANNER_NO_MAIN ao incluir este scanner no parser.c.
+#ifndef SCANNER_NO_MAIN
+// parser_c/parser.c fornece esta função na compilação integrada
+// com -DSCANNER_WITH_PARSER.
+#ifdef SCANNER_WITH_PARSER
+int parser_main(int argc, char** argv);
+#endif
+
 int main(int argc, char** argv) {
     if (argc < 2) {
         fprintf(stderr, "Erro: Nenhum arquivo de entrada fornecido.\n");
         return 1;
     }
 
-    char* input_file = argv[1];
+    // Sem a opção de tokens, a execução é encaminhada ao parser.
+    if (strcmp(argv[1], "--tokens") != 0 && strcmp(argv[1], "-t") != 0) {
+#ifdef SCANNER_WITH_PARSER
+        return parser_main(argc, argv);
+#else
+        fprintf(stderr, "Erro: Parser C ainda não integrado. "
+                "Use --tokens ou -t para executar apenas o scanner.\n");
+        return 1;
+#endif
+    }
+
+    if (argc < 3) {
+        fprintf(stderr, "Erro: Nenhum arquivo de entrada fornecido para o scanner.\n");
+        return 1;
+    }
+
+    char* input_file = argv[2];
     analyze_file(input_file);
     print_tokens();
 
@@ -624,17 +661,8 @@ int main(int argc, char** argv) {
         write_errors(error_filepath);
     }
 
-    // Liberação de memória
-    for (size_t i = 0; i < tokens_count; i++) {
-        free(tokens[i].lexeme);
-        if (tokens[i].attr_str) free(tokens[i].attr_str);
-    }
-    free(tokens);
-
-    for (size_t i = 0; i < errors_count; i++) {
-        free(errors[i].lexeme);
-    }
-    free(errors);
+    free_scanner();
 
     return 0;
 }
+#endif // SCANNER_NO_MAIN
