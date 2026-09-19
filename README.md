@@ -13,6 +13,7 @@ Para rodar o projeto e executar os testes com sucesso, certifique-se de ter as s
 
 ---
 
+
 ## Etapas do Compilador
 
 | Etapa | Status | Descrição |
